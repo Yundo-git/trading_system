@@ -1,6 +1,9 @@
 """
 트레이딩 봇 상태 확인 API
 """
+import os
+import sys
+import psutil
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, Optional
@@ -10,6 +13,37 @@ from ...services.trading_bot_service import get_trading_bot_service, TradingBotS
 
 # 로거 설정
 logger = logging.getLogger(__name__)
+
+def is_bot_running() -> bool:
+    """Check if live_trading_bot.py is running as a separate process"""
+    try:
+        current_pid = os.getpid()
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                # Skip current process
+                if proc.info['pid'] == current_pid:
+                    continue
+                    
+                cmdline = proc.info.get('cmdline', [])
+                if not cmdline:  # Skip if no command line
+                    continue
+                    
+                # Convert cmdline to string for case-insensitive search
+                cmdline_str = ' '.join(cmdline).lower()
+                if ('python' in cmdline[0].lower() and 
+                    'live_trading_bot.py' in cmdline_str):
+                    return True
+                    
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            except Exception as e:
+                logger.warning(f"Error checking process {proc.info.get('pid')}: {e}")
+                continue
+                
+    except Exception as e:
+        logger.error(f"Error in is_bot_running: {e}")
+        
+    return False
 
 router = APIRouter()
 
@@ -31,22 +65,13 @@ async def get_trading_status(
             "Access-Control-Allow-Headers": "*"
         }
         
-        # 🟢 봇 서비스 인스턴스를 통해 실제 상태를 조회합니다.
-        is_running = getattr(bot_service, 'is_running', False)
-        is_initialized = getattr(bot_service, 'is_initialized', False)
+        # Check if live_trading_bot.py is running as a separate process
+        bot_process_running = is_bot_running()
         
-        # 상태 메시지 결정
-        if is_running:
-            status_message = "online"
-        elif is_initialized:
-            status_message = "initialized"
-        else:
-            status_message = "service_not_initialized"
-
         # 응답 데이터 준비
         response_data = {
-            "is_running": is_running,
-            "status": status_message,
+            "is_running": bot_process_running,
+            "status": "running" if bot_process_running else "stopped",
             "last_updated": datetime.utcnow().isoformat() + "Z"
         }
         
